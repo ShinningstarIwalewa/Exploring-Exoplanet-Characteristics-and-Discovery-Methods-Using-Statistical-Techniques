@@ -1,0 +1,366 @@
+---
+title: "R_final_project"
+author: "Akolade Sofiyyah Iwalewa"
+date: "2023-08-10"
+runtime: shiny 
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r}
+# Load the required libraries
+library(readr)
+library(tibble)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(shiny)
+library(DiceKriging)
+library(ggiraph)
+library(magrittr)
+library(gganimate)
+library(reshape2)
+library(mvtnorm)
+library(kernlab)
+```
+
+### QUESTION 1
+
+```{r}
+# Import the exo data.csv as a tibble.
+# Define column types
+column_types <- cols(
+  id = col_character(),
+  flag = col_factor(),
+  meth = col_factor(),
+  year = col_integer(),
+  recency = col_character(),
+  r_asc = col_character(),
+  decl = col_character(),
+  lists = col_character(),
+  .default = col_double()
+)
+
+# Read the CSV file and set column types
+df <- read_csv("exo_data.csv", col_types = column_types)
+```
+
+### Question 2
+
+```{r}
+#Exclude the exoplanets with an unknown method of discovery
+
+# Filter out rows with Unknown in the 'meth' column
+df1 <- df %>%
+  filter(! is.na(meth))
+```
+
+### Question 3
+
+```{r}
+#Create and comment on a graphic which illustrates the relationship between the log_distances from the Sun and the methods of discovery
+
+# Take the logarithm of the distance from the Sun
+log_distance <- log(df1$dist)
+
+  ggplot(df1, aes(x = log_distance, y = meth)) +
+  geom_boxplot(fill = "lightblue") +  # Create a boxplot
+  labs(
+    x = "Log-Distance from Sun",      # Label for x-axis
+    y = "Discovery Method",           # Label for y-axis
+    title = "Relationship between Log-Distance and Discovery Method",  # Title of the plot
+  ) +
+  theme_minimal() + 
+    theme(legend.position = "none")
+```
+
+Comment: 
+
+- For transit: The distribution appears to be positively skewed, as the mean which is approximately 6.2 is slightly less than the median which is approximately 6.4.There is a longer tail on the right side of the distribution.There is a wide spread of data points. There are also outliers on the higher end of the distribution.
+
+- For RV: The distribution appears to be slightly positively skewed because the mean is slightly less than the median. There is also a notable spread of data points.  The distribution might be approximately symmetric, though the skewness should still be considered. There are outliers on both end of the distribution.
+
+- For microlensing: The distribution appears  to be approximately symmetric. The mean is close to the median, which suggests that the data might be centered and not heavily skewed.
+
+- For imaging: The distribution seems to be positively skewed. The mean is higher than the median, suggesting a potential right skew in the distribution. The box plot shows a notable spread of data points. There are no outliers present in the data.
+
+- For timing: The distribution appears to be approximately symmetric and not heavily skewed to the right. The data points are not well spread, and there are no outliers in for the timing method of discovery.
+
+### Question 4
+
+```{r}
+# Create scatterplots of the log-mass versus log-distances, separating by methods of discovery
+
+# Define UI
+ui <- fluidPage(
+  plotlyOutput("scatter_plot")
+)
+
+# Define server
+server <- function(input, output, session) {
+  output$scatter_plot <- renderPlotly({
+    plot_ly(df1, x = ~log10(mass), y = ~log10(dist),
+            text = ~paste("ID: ", id),
+            hoverinfo = "text",
+            mode = "markers",
+            marker = list(size = 10, opacity = 0.7),
+            type = "scatter") %>%
+      add_trace(ids = ~id, type = "scatter",
+                hoverinfo = "text",
+                marker = list(size = 1),
+                showlegend = FALSE,
+                mode = "markers",
+                opacity = 0) %>%
+      layout(
+        title = "Scatterplot of Log-Mass vs. Log-Distance",
+        xaxis = list(title = "Log-Mass"),
+        yaxis = list(title = "Log-Distance"),
+        hovermode = "closest"
+      )
+  })
+  
+  observeEvent(event_data("plotly_click"), {
+    point_data <- event_data("plotly_click")
+    if (!is.null(point_data)) {
+      id <- point_data$id
+      if (!is.null(id)) {
+        url <- paste0("https://www.openexoplanetcatalogue.com/planet/", id)
+        browseURL(url)
+      }
+    }
+  })
+}
+
+# Run the app
+shinyApp(ui, server)
+```
+
+#QUESTION FIVE
+
+```{r}
+# Rename the radius into jupiter radius, and create a new column called earth radius which is 11.2 times the Jupiter radius.
+
+# Rename the 'radius' column to 'jupiter_radius'
+df1 <- df1 %>%
+  rename(jupiter_radius = radius)
+
+# Creating a new column 'earth_radius' as 11.2 times 'jupiter_radius'
+df1 <- df1 %>%
+  mutate(earth_radius = 11.2 * jupiter_radius)
+```
+
+#QUESTION SIX
+
+```{r}
+#Focus only on the rows where log-earth radius and log-period have no missing values, and perform kmeans with four clusters on these two columns.
+
+# Set the random seed to 1
+set.seed(1)
+
+# Create the log-transformed columns of earth_radius and period
+df1$log_earth_radius <- log(df1$earth_radius)
+df1$log_period <- log(df1$period)
+
+# Focusing only on rows without missing values in log_earth_radius and log_period
+df2 <- na.omit(df1 %>% 
+                  select(log_earth_radius, log_period))
+
+# Performing k-means clustering with four clusters
+kmeans_result <- kmeans(df2, centers = 4)
+
+# Adding the cluster assignments to the original tibble
+df1$cluster <- NA
+df1$cluster[complete.cases(df1$log_earth_radius, df1$log_period)] <- kmeans_result$cluster
+```
+
+#QUESTION SEVEN
+
+```{r}
+# Add the clustering labels to the dataset through a new factor column called type, with levels ‘rocky’, ‘hot jupiters’, ‘cold gas giants’, ‘others’ and produce the scatterplot highlighting these clusters.
+
+# Creating a new factor column 'type' based on the cluster assignments
+df1 <- df1 %>%
+  mutate(type = case_when(
+    cluster == 1 ~ 'rocky',
+    cluster == 2 ~ 'hot jupiters',
+    cluster == 3 ~ 'cold gas giants',
+    TRUE ~ 'others'  # For all other clusters not specified 
+  ))
+
+# Create the scatterplot with highlighted clusters
+ggplot(df1, aes(x = log_earth_radius, y = log_period, color = type)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(x = "Log-Earth Radius",
+       y = "Log-Period",
+       title = "Exoplanet Clusters",
+       subtitle = "Based on k-means clustering of log-earth_radius and log-period",
+       color = "Type") 
+```
+
+### QUESTION 8 
+
+```{r}
+# Use a violin plot to illustrate how these clusters relate to the log-mass of the exoplanet. Comment on the resulting plot.
+
+df1$log_mass <- log(df1$mass)
+
+# Create the violin plot
+ggplot(df1, aes(x = type, y = log_mass, fill = type)) +
+  geom_violin(trim = FALSE, alpha = 0.7) +
+  labs(x = "Type",
+       y = "Log-Mass",
+       title = "Exoplanet Clusters by Log-Mass",
+       subtitle = "Based on k-means clustering of log-earth_radius and log-period") +
+scale_fill_discrete(name = "Type")
+```
+
+Comment: The cold_gas_giants, hot_jupiters and rocky data points are well spread.
+
+### QUESTION 9 
+
+```{r}
+# Transform r_asc and decl into two new variables that are the same variables but in values of seconds. Use these as coordinates to represent a celestial map for the exoplanets.
+
+# Function to convert hours, minutes, seconds to seconds
+convert_to_seconds <- function(time_str) {
+  parts <- strsplit(time_str, " ")[[1]]
+  hours <- as.numeric(parts[1])
+  minutes <- as.numeric(parts[2])
+  seconds <- as.numeric(parts[3])
+  total_seconds <- hours * 3600 + minutes * 60 + seconds
+  return(total_seconds)
+}
+
+# Convert r_asc and decl to seconds
+df1$r_asc_seconds <- sapply(df1$r_asc, convert_to_seconds)
+
+# Function to convert degrees, minutes, seconds to seconds
+convert_decl_to_seconds <- function(decl_str) {
+  parts <- strsplit(decl_str, " ")[[1]]
+  degrees <- as.numeric(parts[1])
+  minutes <- as.numeric(parts[2])
+  seconds <- as.numeric(parts[3])
+  total_seconds <- degrees * 3600 + minutes * 60 + seconds
+  if (grepl("^-", decl_str)) {
+    total_seconds <- -total_seconds
+  }
+  return(total_seconds)
+}
+
+# Convert decl to seconds
+df1$decl_seconds <- sapply(df1$decl, convert_decl_to_seconds)
+
+# Create a scatterplot with transformed coordinates
+ggplot(df1, aes(x = r_asc_seconds, y = decl_seconds)) +
+  geom_point(size = 3) +
+  labs(title = "Celestial Map of Exoplanets",
+       x = "Right Ascension (seconds)",
+       y = "Declination (seconds)",
+       color = "Exoplanet") +
+  theme_minimal()
+```
+
+# QUESTION 11 
+
+```{r}
+#  fit a Gaussian process regression with parameters optimised using the method indicated
+
+# Create a new column for log_jupiter_radius and log_mass 
+df1$log_jupiter_radius <- log(df1$jupiter_radius)
+df1$log_mass <- log(df1$mass)
+
+# filter data to contain no missing values for both columns
+df3 <- df1[complete.cases(df1$log_mass, df1$log_jupiter_radius), ]
+
+# Write function for gaussian_process
+fit_gaussian_process <- function(x_g, x, y, method = "BFGS") {
+  # Convert inputs to matrices
+  x_g <- as.matrix(x_g)
+  x <- as.matrix(x)
+  y <- as.vector(y)
+  
+  # Log-transform the starting point for optimization
+  start_point <- log(c(0.00, 0.00, 0.00))
+  
+  # Optimize Gaussian process parameters
+  gp_model <- gausspr(x, y, kernel = "rbfdot", kpar = list(), control = list(trace = TRUE, fnscale = -1), tune.control = list(tol = 1e-4), method = method)
+  
+  # Predict using the Gaussian process model
+  predictions <- predict(gp_model, newdata = x_g)
+  
+  return(predictions)
+}
+
+# Standardise the data
+x <- scale(df3$log_jupiter_radius)  # Covariate
+y <- scale(df3$log_mass)    # Response
+
+# Create a grid of new x-values
+x_g <- pretty(x, n = 100)
+
+# Run the function with Nelder-Mead method
+predictions_nelder_mead <- fit_gaussian_process(x_g = x_g, x = x, y = y , method = "Nelder-Mead")
+```
+
+# QUESTION 12
+
+```{r}
+# Produce an appropriate plot of the Gaussian process regression in (11.) and comment on the resulting fit
+
+# Plotting the data and Gaussian process regression predictions
+plot(df3$log_jupiter_radius, df3$log_mass, pch = 16, col = "blue", xlab = "Log Earth Radius", ylab = "Log Mass", main = "Gaussian Process Regression")
+
+# Add Gaussian process regression predictions to the plot
+lines(x_g, predictions_nelder_mead, col = "red", lwd = 2)
+legend("topright", legend = c("Real_Data", "Gaussian Process Regression"), col = c("blue", "red"), lwd = c(1, 2), pch = c(16, NA))
+```
+
+Comment: The Gaussain Process Regression is effecient in predicting the log_mass variable
+
+# QUESTION 10 $ 13
+
+```{r}
+# Create an interactive plot with Shiny 
+
+# Get the log of the distance variable
+df1$log_distance <- log(df1$dist)
+
+# Exclude NA values 
+df4 <- df1[complete.cases(df1$log_mass, df1$log_distance), ]
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("Exoplanet Explorer"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("yearInput", "Select Year:", min = 2009, max = 2013, value = 2009),
+      selectInput("typeInput", "Select Exoplanet Type:", choices = c("All", unique(df4$type)))
+    ),
+    mainPanel(
+      plotOutput("scatterPlot")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  filtered_exoplanets <- reactive({
+    df4 %>%
+      filter(year == input$yearInput) %>%
+      filter(input$typeInput == "All" | type == input$typeInput)
+  })
+  
+  output$scatterPlot <- renderPlot({
+    ggplot(filtered_exoplanets(), aes(x = log_mass, y = log_distance, color = meth)) +
+      geom_point() +
+      labs(x = "Log Mass", y = "Log Distance", color = "Discovery Method") +
+      theme_minimal()
+  })
+}
+
+# Run the app
+shinyApp(ui, server)
+```
