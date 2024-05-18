@@ -1,1 +1,1 @@
-# Exploring-Exoplanet-Characteristics-and-Discovery-Methods-Using-Statistical-Techniques
+# Exploring Exoplanet Characteristics and Discovery Methods Using Statistical Techniques
